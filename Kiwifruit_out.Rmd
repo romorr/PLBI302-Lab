@@ -1,0 +1,614 @@
+---
+title: "Kiwifruit_Lab"
+author: "Me :) (Rosie M)"
+date: "2026-07-22"
+output: html_document
+---
+
+You require each of the following packages to run this lab. If you do not have them, please install them using the following commands in order.
+
+```{r}
+install.packages("BiocManager")
+BiocManager::install(c("DESeq2", "clusterProfiler", "GO.db"))
+install.packages(c("dplyr", "ggplot2", "pheatmap", "RColorBrewer", "tidyr", "readr", "tibble", "knitr", "kableExtra"))
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(tidyr)
+library(clusterProfiler)
+library(readr)
+library(GO.db)
+library(tibble)
+library(knitr)
+library(kableExtra)
+```
+
+# Identifying variants implicated in kiwifruit actinidain production
+
+## The Purpose and the Plan
+
+Using publicly available RNA-seq data from three different strains of kiwifruit (Hongyang (Red), G3 (Yellow) and Lvrou (Green)), we aim to identify variants in either the expression or sequence of relevant genes which downstream could explain the differences in the ability of these kiwifruit strains to degrade protein.
+
+We will -
+
+Identify relevant publically available RNA-seq data sets relevant to the study.
+
+Map these reads to the genome available from the [Kiwifruit Genome Database](https://kiwifruitgenome.org/) (*Actinidia chinensis* (Hong Yang v3)).
+
+Identify gene expression variations between the different strains.
+
+Identify gene sequence variations between the strains.
+
+### Previously....
+
+##### Collecting Read Data
+
+Reads come in fastq files. These contain nucleotide (DNA or RNA depending) and quality information. They also come gziped (.gz suffix; compression format) as the files themselves can be massive. Thankfully, we do not have to uncompress the files as most bioinformatic tools work just as well on compressed and uncompressed files. There are many depositories of read data. Heavy-hitters include the [European Nucleotide Archive](https://www.ebi.ac.uk/ena/browser/) (ENA) and the [Sequence Read Archive](https://www.ncbi.nlm.nih.gov/sra/?term=) (SRA). The SRA (in my opinion) has an intuitive advanced searching system as it is connected to NCBI, but accessing reads from ENA is easier as there is an somewhat confusing system to downloading SRA files. Most projects are stored on both SRA and ENA.
+
+We are trying to identify variants between strains under all conditions therefore we need a dataset that -
+
+1)  Contains all the strains of interest.
+
+2)  Samples under normal conditions.
+
+SRA and ENA contains the reads, but the whole dataset (project) that the reads were generate through can be found through [Bioproject](https://www.ncbi.nlm.nih.gov/bioproject/).
+
+Through searching for -
+
+"Actinidia chinensis"[Organism] AND ("bioproject sra"[Filter] AND "method sequencing"[Filter]) AND "scope multispecies"[Filter]
+
+on Bioproject I identified the project below.
+
+| Title | Accession | Strains | Conditions |
+|----|----|----|----|
+| Multi-omics reveals the mechanisms underlying the differences in the formation of volatile and non-volatile metabolites of different kiwifruit varieties | PRJNA1413911 | G3, Hongyang, Lvrou (Red, Green and Yellow) | Normal |
+
+Copying the accession into ENA takes you to the project page.
+
+```{r, echo = F}
+knitr::include_url("https://www.ebi.ac.uk/ena/browser/view/PRJNA1413911")
+```
+
+Clicking "Download All", downloads a file, which can be run through the university computer system to download all .fastq files associated with the project.
+
+These are raw fastq files containing all reads collected. These reads could have all sorts of issues associated with them including -
+
+-   Duplication
+
+-   Still containing adapters (sequences that allow the sequencer (the machine reading the nucleotides) to be able to identify which nucleotides they are to read)
+
+-   Truncated
+
+Using read quality control tools such as [fastp](#0), we can identify and remove these from the set.
+
+Afterwards, we need to map the reads to a genome. [Hisat](#0), is a commonly used tool which maps fastq files to a given genome creating commonly used file format - sequence aligment map (SAM). Sam files are a notoriously large, hard to work with file type. They are often converted to binary alignment map (BAM) files for downstream analysis using [Samtools](https://samtools.github.io/).
+
+The bam files contain both sequence alignment information (where each read maps to on the genome) but also quantity information (how many reads map to each region of the genome). Therefore, using the bam files we can create a count-table that contains each transcript (RNA molecule) and how many times that transcript is seen across the different conditions. This is completed using [featureCounts](#0).
+
+However, we also need to supply an annotation file - usually a GTF or GFF filer. This is supplied with the genome and tells featureCounts were each gene starts and ends.
+
+Breakdown of steps completed before the lab
+
+| Stage of Analysis |     Step 1     |     Step 2      | Step 3  |       Step 4       |
+|:-----------------:|:--------------:|:---------------:|:-------:|:------------------:|
+|     **Step**      | Download Files | Quality Control | Mapping | Create count table |
+|     **Tools**     |    SRA/ENA     |      Fastp      |  Hisat  |   FeatureCounts    |
+
+## Differential Expression Analysis
+
+For identifying genes that are expressed at different levels between strains, we will use the tool [DESeq2](#0).
+
+For this we need a count table and a meta table. The count table (created by featureCounts) contain the amount of times a transcript was mapped to a particular gene.
+
+All required input files are supplied, put them all into the same folder and set that folder as your working directory (from bar above, Session, Set Working Directory, Choose Directory)
+
+```{r}
+# Read in Count Table 
+
+kiwifruit_counts <- read.table("kiwifruit_counts_all2.txt")
+colnames(kiwifruit_counts) <- c("HY_1", "HY_2", "HY_3", "G3_1", "G3_2", "G3_3", "LV_1", "LV_2", "LV_3") # Name then to what we can understnd. 
+kiwifruit_counts <- kiwifruit_counts[rowSums(kiwifruit_counts) > 0, ] # Removing any rows where there are no counts for the transcrip. 
+head(kiwifruit_counts)
+```
+
+A metatable tells DESeq2 all the important information about the types of samples in the set. It is important when we are comparing between conditions as it tells DESeq2 which columns are replicates and which are entirely different conditions.
+
+```{r}
+sample_names <- c("HY_1", "HY_2", "HY_3", "G3_1", "G3_2", "G3_3", "LV_1", "LV_2", "LV_3") # These need to match the colnames in the count_table. 
+
+meta_table <- data.frame(SampleID = sample_names, Strain = c(rep("Hongyang", 3), rep("G3", 3), rep("Lvrou", 3))) # Which samples are which strain. 
+
+rownames(meta_table) <- meta_table$SampleID
+```
+
+Now we have a count_table and a metatable, we can move forward with DESeq2.
+
+```{r}
+dds <- DESeqDataSetFromMatrix(
+  countData = kiwifruit_counts,
+  colData = meta_table,
+  design = ~ Strain # Group and compare samples across the different strains
+)
+
+dds$Strain <- relevel(dds$Strain, ref = "Hongyang") # DESeq automatically makes the "base" level through alphabetical order. As the genome that I mapped the reads to is the Hongyang strain, it is logical to compare the other strains, to the "reference". 
+
+dds <- DESeq(dds) # Run DESeq
+resultsNames(dds) # Shows you both strains compared to Hongyang. 
+```
+
+**Question**
+
+I have left two variables free, alpha and lfcThreshold. The alpha value indicates the value that we want to use to cut off how significant a value must be for it to be present. Commonly used values include 0.05, 0.01 ect.
+
+```{r}
+
+# Find summaries.
+
+res_G3_vs_HY <- results(dds, alpha = 0.01, lfcThreshold = 2, 
+  contrast = list("Strain_G3_vs_Hongyang")) 
+
+
+res_LV_vs_HY <- results(dds, alpha = 0.01, lfcThreshold = 2,
+  contrast = list("Strain_Lvrou_vs_Hongyang"))
+
+summary(res_G3_vs_HY)
+summary(res_LV_vs_HY)
+```
+
+So, technically right now, differential expression analysis is done. But now we have to look into the results and see which genes are undergoing differential expression.
+
+We can identify which genes are undergoing the greatest positive (upregulated) and negative (downregulated) logfold change (LFC).
+
+```{r}
+
+res_G3_vs_HY_df <- as.data.frame(res_G3_vs_HY)
+res_LV_vs_HY_df <- as.data.frame(res_LV_vs_HY)
+
+G3 <- res_G3_vs_HY_df %>% rownames_to_column("gene")
+LV <- res_LV_vs_HY_df  %>% rownames_to_column("gene")
+
+# 2. Top 5 up in G3
+up_G3 <- G3 %>%
+  filter(padj < 0.05, log2FoldChange > 0) %>%
+  arrange(desc(log2FoldChange)) %>%
+  head(5) %>%
+  mutate(Comparison = "G3 vs HY", Direction = "Up")
+
+# 3. Top 5 down in G3
+down_G3 <- G3 %>%
+  filter(padj < 0.05, log2FoldChange < 0) %>%
+  arrange(log2FoldChange) %>%   # most negative first
+  head(5) %>%
+  mutate(Comparison = "G3 vs HY", Direction = "Down")
+
+# 4. Top 5 up in LV
+up_LV <- LV %>%
+  filter(padj < 0.05, log2FoldChange > 0) %>%
+  arrange(desc(log2FoldChange)) %>%
+  head(5) %>%
+  mutate(Comparison = "LV vs HY", Direction = "Up")
+
+# 5. Top 5 down in LV
+down_LV <- LV %>%
+  filter(padj < 0.05, log2FoldChange < 0) %>%
+  arrange(log2FoldChange) %>%
+  head(5) %>%
+  mutate(Comparison = "LV vs HY", Direction = "Down")
+
+# 6. Combine everything
+final_table <- bind_rows(up_G3, down_G3, up_LV, down_LV)
+
+# 7. Pick only the columns you want to show
+final_table <- final_table %>%
+  dplyr::select(Comparison, Direction, gene, log2FoldChange, padj)
+
+# 8. View it
+final_table %>%
+  mutate(
+    log2FoldChange = round(log2FoldChange, 2),
+    padj = format(padj, scientific = TRUE, digits = 3)
+  ) %>%
+  kable(
+    col.names = c("Comparison", "Direction", "Gene", "log₂ Fold Change", "Adj. p‑value"),
+    caption = "Top 5 up‑ and down‑regulated genes in each comparison",
+    digits = 2,
+    format = "html"  # or "markdown" for plain text
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE)
+```
+
+But this means nothing in of itself. We have to first annotate the genes. This "translates" the gene so that we can understand their function. This has been completed earlier using a tool called [eggnog](#0).
+
+```{r}
+# Read in annotation file
+eggnog <- read_tsv(
+  "eggnog_annotation.emapper.annotations",
+  skip = 3,
+  comment = "##",
+  col_names = TRUE
+)
+names(eggnog)[1] <- "query"
+
+# Map to genes within the DESeq2 result. 
+
+eggnog <- eggnog %>%
+  mutate(gene = sub("\\.t\\d+$", "", query))
+
+res_all <- results(dds)
+res_all_df <- as.data.frame(res_all)
+res_all_df$gene <- rownames(res_all_df)
+annotated_all <- merge(res_all_df, eggnog, by = "gene", all.x = TRUE)
+```
+
+Having gene annotations opens up the possibilities of what we can do with RNA-seq analysis.
+
+For example, pathway expression analysis.
+
+```{r}
+# 1. Function to split comma‑separated GO terms
+split_go <- function(go_string) {
+  if (is.na(go_string) || go_string == "-" || go_string == "") {
+    return(character(0))
+  } else {
+    terms <- trimws(unlist(strsplit(go_string, ",")))
+    terms[terms != ""]
+  }
+}
+
+# 2. Build gene‑to‑GO mapping in long format
+gene2go <- eggnog[, c("gene", "GOs")]
+gene2go <- gene2go[!is.na(gene2go$GOs) & gene2go$GOs != "-", ]
+
+gene2go_long <- gene2go %>%
+  rowwise() %>%
+  mutate(GO = list(split_go(GOs))) %>%
+  unnest(GO) %>%
+  dplyr::select(gene, GO) %>%
+  distinct()
+
+# 3. Create term2gene and term2name for clusterProfiler
+term2gene <- gene2go_long[, c("GO", "gene")]
+
+go_ids <- unique(gene2go_long$GO)
+go_names <- mapIds(GO.db, keys = go_ids, column = "TERM", keytype = "GOID")
+term2name <- data.frame(
+  ID = go_ids,
+  Description = ifelse(is.na(go_names[go_ids]), go_ids, go_names[go_ids]),
+  stringsAsFactors = FALSE
+)
+
+# 4. Define background genes (all genes in your DESeq2 object)
+background_genes <- rownames(dds)   # if dds exists
+
+
+# G3
+up_genes_G3 <- G3 %>%
+  filter(padj < 0.05, log2FoldChange > 0) %>%
+  pull(gene)
+
+down_genes_G3 <- G3 %>%
+  filter(padj < 0.05, log2FoldChange < 0) %>%
+  pull(gene)
+
+# LV
+up_genes_LV <- LV %>%
+  filter(padj < 0.05, log2FoldChange > 0) %>%
+  pull(gene)
+
+down_genes_LV <- LV %>%
+  filter(padj < 0.05, log2FoldChange < 0) %>%
+  pull(gene)
+
+term2gene <- gene2go_long[, c("GO", "gene")]
+
+go_ids <- unique(gene2go_long$GO)
+go_names <- mapIds(GO.db, keys = go_ids, column = "TERM", keytype = "GOID")
+term2name <- data.frame(
+  ID = go_ids,
+  Description = ifelse(is.na(go_names[go_ids]), go_ids, go_names[go_ids]),
+  stringsAsFactors = FALSE
+)
+
+# ---------- 2. Run enrichment for all 4 sets ----------
+run_go <- function(gene_list, comp_name, dir_name) {
+  if (length(gene_list) < 5) {
+    message(paste("Skipping", comp_name, dir_name, "- too few genes"))
+    return(NULL)
+  }
+  
+  res <- enricher(
+    gene = gene_list,
+    TERM2GENE = term2gene,
+    TERM2NAME = term2name,
+    universe = background_genes,
+    pvalueCutoff = 0.05,
+    pAdjustMethod = "BH",
+    minGSSize = 5,
+    maxGSSize = 500
+  )
+  
+  if (is.null(res) || nrow(res@result) == 0) {
+    message(paste("No enrichment for", comp_name, dir_name))
+    return(NULL)
+  }
+  
+  # Add comparison labels to the results
+  df <- res@result
+  df$Comparison <- comp_name
+  df$Direction <- dir_name
+  return(df)
+}
+
+# Run all four
+go_G3_up   <- run_go(up_genes_G3,   "G3 vs HY", "Up")
+go_G3_down <- run_go(down_genes_G3, "G3 vs HY", "Down")
+go_LV_up   <- run_go(up_genes_LV,   "LV vs HY", "Up")
+go_LV_down <- run_go(down_genes_LV, "LV vs HY", "Down")
+
+# ---------- 3. Combine top 5 GO terms from each into ONE table ----------
+top_go_table <- bind_rows(
+  go_G3_up   %>% arrange(p.adjust) %>% head(5),
+  go_G3_down %>% arrange(p.adjust) %>% head(5),
+  go_LV_up   %>% arrange(p.adjust) %>% head(5),
+  go_LV_down %>% arrange(p.adjust) %>% head(5)
+) %>%
+  dplyr::select(Comparison, Direction, 
+         GO_ID = ID, 
+         Description, 
+         p.adjust, 
+         GeneRatio, 
+         Count, 
+         geneID)   # geneID shows which genes are in that GO term
+
+top_go_table %>%
+  mutate(
+    p.adjust = format(p.adjust, scientific = TRUE, digits = 3),
+    GeneRatio = round(GeneRatio, 3),
+    geneID = str_replace_all(geneID, "/", ", ")   # make gene list more readable
+  ) %>%
+  kable(
+    col.names = c("Comparison", "Direction", "GO ID", "Description", 
+                  "Adj. p‑value", "Gene Ratio", "Count", "Genes"),
+    caption = "Top 5 enriched GO terms per group",
+    digits = 3
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE)
+```
+
+```{r}
+# ---------- Figure: GO enrichment across all groups ----------
+
+# Function to run enrichment and return a data frame with labels
+get_go_df <- function(genes, comp, dir) {
+  if (length(genes) < 5) return(NULL)
+  res <- enricher(genes, TERM2GENE = term2gene, TERM2NAME = term2name,
+                  universe = background_genes, pvalueCutoff = 0.05,
+                  pAdjustMethod = "BH", minGSSize = 5, maxGSSize = 500)
+  if (is.null(res) || nrow(res@result) == 0) return(NULL)
+  df <- res@result
+  df$Comparison <- comp
+  df$Direction  <- dir
+  return(df)
+}
+
+# Get all four
+go_G3_up   <- get_go_df(up_genes_G3,   "G3 vs HY", "Up")
+go_G3_down <- get_go_df(down_genes_G3, "G3 vs HY", "Down")
+go_LV_up   <- get_go_df(up_genes_LV,   "LV vs HY", "Up")
+go_LV_down <- get_go_df(down_genes_LV, "LV vs HY", "Down")
+
+# Combine and keep top 10 per group
+all_go <- bind_rows(go_G3_up, go_G3_down, go_LV_up, go_LV_down)
+all_go$Group <- paste(all_go$Comparison, all_go$Direction, sep = "\n")
+
+top_terms <- all_go %>%
+  group_by(Group) %>%
+  arrange(p.adjust, .by_group = TRUE) %>%
+  slice_head(n = 10) %>%
+  ungroup() %>%
+  mutate(Description = factor(Description, levels = rev(unique(Description[order(p.adjust)]))))
+
+plot_group <- function(data, group_label) {
+  df <- data %>% filter(Group == group_label)
+  
+  ggplot(df, aes(x = GeneRatio, y = Description)) +
+    geom_point(aes(size = Count, color = p.adjust)) +
+    scale_color_gradient(low = "red", high = "blue", trans = "log10",
+                         name = "Adjusted p‑value") +
+    scale_size_continuous(name = "Gene Count") +
+    labs(x = "Gene Ratio", y = NULL,
+         title = group_label) +
+    theme_bw() +
+    theme(axis.text.y = element_text(size = 10),
+          plot.title = element_text(face = "bold", size = 14),
+          panel.grid.minor = element_blank())
+}
+p_G3_up   <- plot_group(top_terms, "G3 vs HY\nUp")
+p_G3_down <- plot_group(top_terms, "G3 vs HY\nDown")
+p_LV_up   <- plot_group(top_terms, "LV vs HY\nUp")
+p_LV_down <- plot_group(top_terms, "LV vs HY\nDown")
+
+print(p_G3_down)
+print(p_G3_up)
+print(p_LV_up)
+print(p_LV_down)
+```
+
+**Question**
+
+1)  Which pathways are expressed differently between the different strains and what might they mean regarding kiwifruit physiology.
+
+We are trying to identify the cause of why green kiwifruit have a greater ability to digest proteins. The type of protein that degrades protein is called a protease. Using the annotation file, we can identify which genes contain a protease domain. Any genetic (sequential or expression) differences between the strains, could be the answer as to why the phenotype is different.
+
+```{r}
+# Pull out proteases from the annotation file
+
+library(dplyr)
+library(stringr)
+
+# Define keywords for proteases (case‑insensitive)
+protease_keywords <- c("protease", "peptidase", "proteinase", 
+                       "endopeptidase", "exopeptidase", "carboxypeptidase",
+                       "aminopeptidase", "dipeptidase", "metalloprotease",
+                       "serine protease", "cysteine protease", "aspartic protease")
+
+# Filter rows where Description or GOs contain any keyword
+protease_genes <- eggnog %>%
+  filter(
+    str_detect(Description, regex(paste(protease_keywords, collapse = "|"), ignore_case = TRUE)) |
+    str_detect(GOs, regex(paste(protease_keywords, collapse = "|"), ignore_case = TRUE))
+  ) %>%
+  pull(gene) %>%          # extract gene IDs
+  unique()
+
+cat("Number of putative protease genes:", length(protease_genes), "\n")
+
+# Map the proteases to the expression data. This allows us to identify which proteases are changing in expression between the strains. 
+
+# Create data frames for each comparison with gene and statistics
+G3_expr <- G3 %>% filter(gene %in% protease_genes)   
+LV_expr <- LV %>% filter(gene %in% protease_genes)
+
+# For each, classify as up/down if padj < 0.05 and |log2FC| > 2 (your threshold)
+G3_proteases <- G3_expr %>%
+  mutate(Regulation = case_when(
+    padj < 0.05 & log2FoldChange > 2   ~ "Up in G3",
+    padj < 0.05 & log2FoldChange < -2  ~ "Down in G3",
+    TRUE ~ "Not significant"
+  ))
+
+LV_proteases <- LV_expr %>%
+  mutate(Regulation = case_when(
+    padj < 0.05 & log2FoldChange > 2   ~ "Up in LV",
+    padj < 0.05 & log2FoldChange < -2  ~ "Down in LV",
+    TRUE ~ "Not significant"
+  ))
+
+# Combine into one table for easy viewing
+protease_table <- G3_proteases %>%
+  dplyr::select(gene, log2FC_G3 = log2FoldChange, padj_G3 = padj, Reg_G3 = Regulation) %>%
+  full_join(
+    LV_proteases %>% 
+      dplyr::select(gene, log2FC_LV = log2FoldChange, padj_LV = padj, Reg_LV = Regulation),
+    by = "gene"
+  )
+
+# Add annotation description (optional)
+protease_table <- protease_table %>%
+  left_join(eggnog %>% dplyr::select(gene, Description), by = "gene") %>%
+  relocate(Description, .after = gene)
+
+# Show only significant ones (either comparison)
+protease_table_sig <- protease_table %>%
+  filter(Reg_G3 != "Not significant" | Reg_LV != "Not significant")
+
+print(protease_table_sig)
+```
+
+```{r}
+cat("Significant proteases in G3 vs HY:\n")
+table(protease_table_sig$Reg_G3)
+
+cat("\nSignificant proteases in LV vs HY:\n")
+table(protease_table_sig$Reg_LV)
+```
+
+```{r}
+library(pheatmap)
+
+# Significant protease genes 
+sig_protease_genes <- protease_table_sig$gene 
+
+# Get expression counts for proteases from your original count table
+
+protease_counts <- kiwifruit_counts[rownames(kiwifruit_counts) %in% sig_protease_genes, ]
+
+# Optional: log2 transform and scale per gene
+log_counts <- log2(protease_counts + 1)
+scaled <- t(scale(t(log_counts)))   # z‑score per gene
+
+# Annotate columns by strain
+annotation_col <- data.frame(Strain = meta_table$Strain)
+rownames(annotation_col) <- colnames(kiwifruit_counts)
+
+pheatmap(scaled,
+         annotation_col = annotation_col,
+         show_rownames = FALSE,   # too many genes; can show if few
+         main = "Protease gene expression across strains",
+         fontsize = 8)
+```
+
+**Question**
+
+1)  How many protease genes are changing in expression across strains. Remember which colour kiwifruit has the greatest protease ability.
+
+Actinidian belongs to the peptidase C1 family. How many C1's are there in the genome?
+
+```{r}
+cysteine_protease_keywords <-  "peptidase C1 family"
+
+cysteine_protease_genes <- eggnog %>%
+  filter(
+    str_detect(Description, regex(paste(cysteine_protease_keywords, collapse = "|"), ignore_case = TRUE)) |
+    str_detect(GOs, regex(paste(cysteine_protease_keywords, collapse = "|"), ignore_case = TRUE))
+  ) %>%
+  pull(gene) %>%          # extract gene IDs
+  unique()
+
+cat("Number of putative protease genes:", length(cysteine_protease_genes), "\n")
+
+# Map the proteases to the expression data. This allows us to identify which proteases are changing in expression between the strains. 
+
+# Create data frames for each comparison with gene and statistics
+G3_expr <- G3 %>% filter(gene %in% cysteine_protease_genes)   
+LV_expr <- LV %>% filter(gene %in% cysteine_protease_genes)
+
+# For each, classify as up/down if padj < 0.05 and |log2FC| > 2 (your threshold)
+G3_proteases_cysteine <- G3_expr %>%
+  mutate(Regulation = case_when(
+    padj < 0.05 & log2FoldChange > 2   ~ "Up in G3",
+    padj < 0.05 & log2FoldChange < -2  ~ "Down in G3",
+    TRUE ~ "Not significant"
+  ))
+
+LV_proteases_cysteine <- LV_expr %>%
+  mutate(Regulation = case_when(
+    padj < 0.05 & log2FoldChange > 2   ~ "Up in LV",
+    padj < 0.05 & log2FoldChange < -2  ~ "Down in LV",
+    TRUE ~ "Not significant"
+  ))
+
+# Combine into one table for easy viewing
+cysteine_protease_table <- G3_proteases_cysteine %>%
+  dplyr::select(gene, log2FC_G3 = log2FoldChange, padj_G3 = padj, Reg_G3 = Regulation) %>%
+  full_join(
+    LV_proteases_cysteine %>% 
+      dplyr::select(gene, log2FC_LV = log2FoldChange, padj_LV = padj, Reg_LV = Regulation),
+    by = "gene"
+  )
+
+# Add annotation description (optional)
+cysteine_protease_table <- cysteine_protease_table %>%
+  left_join(eggnog %>% dplyr::select(gene, Description), by = "gene") %>%
+  relocate(Description, .after = gene)
+
+# Show only significant ones (either comparison)
+cysteine_protease_table_sig <- cysteine_protease_table %>%
+  filter(Reg_G3 != "Not significant" | Reg_LV != "Not significant")
+
+print(cysteine_protease_table_sig)
+
+```
+
+**Question**
+
+Ignoring any that are non-significant in any condition, how many proteases / peptidases are we left with?
