@@ -1,18 +1,17 @@
 ---
 title: "Kiwifruit_Lab"
-author: "Me :) (Rosie M)"
+author: "Me :)"
 date: "2026-07-22"
 output: html_document
 ---
 
-You require each of the following packages to run this lab. If you do not have them, please install them using the following commands in order.
+If you do not have the required packages run the code block below (you will need to remove the comment (\#))
 
 ```{r}
-install.packages("BiocManager")
-BiocManager::install(c("DESeq2", "clusterProfiler", "GO.db"))
-install.packages(c("dplyr", "ggplot2", "pheatmap", "RColorBrewer", "tidyr", "readr", "tibble", "knitr", "kableExtra"))
+#install.packages("BiocManager")
+#BiocManager::install(c("DESeq2", "clusterProfiler", "GO.db", "stringr"))
+#install.packages(c("dplyr", "ggplot2", "pheatmap", "RColorBrewer", "tidyr", "readr", "tibble", "knitr", "kableExtra"))
 ```
-
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -28,6 +27,7 @@ library(GO.db)
 library(tibble)
 library(knitr)
 library(kableExtra)
+library(stringr)
 ```
 
 # Identifying variants implicated in kiwifruit actinidain production
@@ -67,7 +67,7 @@ Through searching for -
 on Bioproject I identified the project below.
 
 | Title | Accession | Strains | Conditions |
-|----|----|----|----|
+|------------------|------------------|------------------|------------------|
 | Multi-omics reveals the mechanisms underlying the differences in the formation of volatile and non-volatile metabolites of different kiwifruit varieties | PRJNA1413911 | G3, Hongyang, Lvrou (Red, Green and Yellow) | Normal |
 
 Copying the accession into ENA takes you to the project page.
@@ -97,7 +97,7 @@ However, we also need to supply an annotation file - usually a GTF or GFF filer.
 Breakdown of steps completed before the lab
 
 | Stage of Analysis |     Step 1     |     Step 2      | Step 3  |       Step 4       |
-|:-----------------:|:--------------:|:---------------:|:-------:|:------------------:|
+|:-------------:|:-------------:|:-------------:|:-------------:|:-------------:|
 |     **Step**      | Download Files | Quality Control | Mapping | Create count table |
 |     **Tools**     |    SRA/ENA     |      Fastp      |  Hisat  |   FeatureCounts    |
 
@@ -126,9 +126,32 @@ sample_names <- c("HY_1", "HY_2", "HY_3", "G3_1", "G3_2", "G3_3", "LV_1", "LV_2"
 meta_table <- data.frame(SampleID = sample_names, Strain = c(rep("Hongyang", 3), rep("G3", 3), rep("Lvrou", 3))) # Which samples are which strain. 
 
 rownames(meta_table) <- meta_table$SampleID
+
 ```
 
-Now we have a count_table and a metatable, we can move forward with DESeq2.
+### Data Checking
+
+We need to make sure that none of the samples are skewing our results. The first is to check whether there are any samples with significantly more or less reads. Below are two ways to do that. The first is looking directly at the amount of reads present, and the second is to look at the correlation of reads between samples.
+
+For example, gene 1 has on on average 4 reads in species 1, and 8 reads in species 2. Gene 2 has 10 reads in species 1 and 2 in species 2. The different species have a different amount of reads in different genes. We can see which samples have similar amounts of reads for the same genes in the heat map below.
+
+```{r}
+
+colSums(kiwifruit_counts) / 1e6
+
+log_counts <- log2(kiwifruit_counts + 1)
+
+# Calculate sample-to-sample correlations
+cor_matrix <- cor(log_counts, method = "pearson")
+print(pheatmap(cor_matrix, annotation_col = meta_table, drop = FALSE))
+
+```
+
+**Question**
+
+Are the samples part of the same species grouping together? Are there any samples with a lot less or a lot more reads than another?
+
+Now we have a count_table a metatable, and have checked our data, we can move forward with DESeq2.
 
 ```{r}
 dds <- DESeqDataSetFromMatrix(
@@ -143,24 +166,60 @@ dds <- DESeq(dds) # Run DESeq
 resultsNames(dds) # Shows you both strains compared to Hongyang. 
 ```
 
+### Post-DESeq2 QC
+
+```{r}
+###############################################
+#VST for PCA + QC
+###############################################
+vsd <- vst(dds, blind = FALSE)
+
+###############################################
+#PCA plot
+###############################################
+pca <- plotPCA(vsd, intgroup = "Strain") +
+  ggplot2::ggtitle("PCA of Samples: Strains") +
+  ggplot2::theme_minimal(base_size = 14)
+pca
+
+###############################################
+#Sample distance heatmap
+###############################################
+dists <- dist(t(assay(vsd)))
+mat   <- as.matrix(dists)
+
+pheatmap(mat,
+         clustering_distance_rows = dists,
+         clustering_distance_cols = dists,
+         main = "Sample-to-Sample Distance Heatmap" , annotation_col = meta_table, drop = FALSE, 
+         fontsize = 12)
+
+```
+
 **Question**
 
-I have left two variables free, alpha and lfcThreshold. The alpha value indicates the value that we want to use to cut off how significant a value must be for it to be present. Commonly used values include 0.05, 0.01 ect.
+Is there any sample that is not following the same pattern as its replicates?
 
 ```{r}
 
-# Find summaries.
+# Find summaries. Play around with changing the alpha value and the lncThreshold value and run different pathways analysis through them. See how the outputs change depending on what values you choose. 
 
-res_G3_vs_HY <- results(dds, alpha = 0.01, lfcThreshold = 2, 
+res_G3_vs_HY <- results(dds, alpha = 0.05, lfcThreshold = 5, 
   contrast = list("Strain_G3_vs_Hongyang")) 
 
+# Remembering back to the lectures, the alpha value tells DESeq the threshold for the false discovery rate (FDR), a value of 0.01 indicates that 1 % of the reported genes are false positives. 
 
-res_LV_vs_HY <- results(dds, alpha = 0.01, lfcThreshold = 2,
+
+res_LV_vs_HY <- results(dds, alpha = 0.05, lfcThreshold = 5,
   contrast = list("Strain_Lvrou_vs_Hongyang"))
 
 summary(res_G3_vs_HY)
 summary(res_LV_vs_HY)
 ```
+
+**Question**
+
+Based on above, which kiwifruit species are more similar than the other?
 
 So, technically right now, differential expression analysis is done. But now we have to look into the results and see which genes are undergoing differential expression.
 
@@ -354,25 +413,17 @@ go_LV_up   <- run_go(up_genes_LV,   "LV vs HY", "Up")
 go_LV_down <- run_go(down_genes_LV, "LV vs HY", "Down")
 
 # ---------- 3. Combine top 5 GO terms from each into ONE table ----------
-top_go_table <- bind_rows(
-  go_G3_up   %>% arrange(p.adjust) %>% head(5),
-  go_G3_down %>% arrange(p.adjust) %>% head(5),
-  go_LV_up   %>% arrange(p.adjust) %>% head(5),
-  go_LV_down %>% arrange(p.adjust) %>% head(5)
-) %>%
-  dplyr::select(Comparison, Direction, 
-         GO_ID = ID, 
-         Description, 
-         p.adjust, 
-         GeneRatio, 
-         Count, 
-         geneID)   # geneID shows which genes are in that GO term
-
 top_go_table %>%
   mutate(
-    p.adjust = format(p.adjust, scientific = TRUE, digits = 3),
-    GeneRatio = round(GeneRatio, 3),
-    geneID = str_replace_all(geneID, "/", ", ")   # make gene list more readable
+    # Split GeneRatio into numerator and denominator
+    num = as.numeric(sub("/.*$", "", GeneRatio)),
+    den = as.numeric(sub("^.*/", "", GeneRatio)),
+    GeneRatio = round(num / den, 3)
+  ) %>%
+  dplyr::select(-num, -den) %>%
+  mutate(
+    p.adjust = format(as.numeric(p.adjust), scientific = TRUE, digits = 3),
+    geneID = gsub("/", ", ", geneID)   # base R alternative to str_replace_all
   ) %>%
   kable(
     col.names = c("Comparison", "Direction", "GO ID", "Description", 
@@ -450,11 +501,6 @@ print(p_LV_down)
 We are trying to identify the cause of why green kiwifruit have a greater ability to digest proteins. The type of protein that degrades protein is called a protease. Using the annotation file, we can identify which genes contain a protease domain. Any genetic (sequential or expression) differences between the strains, could be the answer as to why the phenotype is different.
 
 ```{r}
-# Pull out proteases from the annotation file
-
-library(dplyr)
-library(stringr)
-
 # Define keywords for proteases (case‑insensitive)
 protease_keywords <- c("protease", "peptidase", "proteinase", 
                        "endopeptidase", "exopeptidase", "carboxypeptidase",
@@ -508,10 +554,19 @@ protease_table <- protease_table %>%
   relocate(Description, .after = gene)
 
 # Show only significant ones (either comparison)
-protease_table_sig <- protease_table %>%
-  filter(Reg_G3 != "Not significant" | Reg_LV != "Not significant")
-
-print(protease_table_sig)
+protease_table_sig %>%
+  mutate(
+    log2FC_G3 = round(log2FC_G3, 2),
+    log2FC_LV = round(log2FC_LV, 2),
+    padj_G3 = format(padj_G3, scientific = TRUE, digits = 2),
+    padj_LV = format(padj_LV, scientific = TRUE, digits = 2)
+  ) %>%
+  dplyr::select(Gene = gene, Description, 
+                `log2FC (G3)` = log2FC_G3, `p‑adj (G3)` = padj_G3, `Reg (G3)` = Reg_G3,
+                `log2FC (LV)` = log2FC_LV, `p‑adj (LV)` = padj_LV, `Reg (LV)` = Reg_LV) %>%
+  kable(caption = "Significant protease genes") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  print()
 ```
 
 ```{r}
@@ -523,8 +578,6 @@ table(protease_table_sig$Reg_LV)
 ```
 
 ```{r}
-library(pheatmap)
-
 # Significant protease genes 
 sig_protease_genes <- protease_table_sig$gene 
 
@@ -605,10 +658,44 @@ cysteine_protease_table <- cysteine_protease_table %>%
 cysteine_protease_table_sig <- cysteine_protease_table %>%
   filter(Reg_G3 != "Not significant" | Reg_LV != "Not significant")
 
-print(cysteine_protease_table_sig)
+cysteine_protease_table_sig %>%
+  mutate(
+    log2FC_G3 = round(log2FC_G3, 2),
+    log2FC_LV = round(log2FC_LV, 2),
+    padj_G3 = format(padj_G3, scientific = TRUE, digits = 2),
+    padj_LV = format(padj_LV, scientific = TRUE, digits = 2)
+  ) %>%
+  dplyr::select(Gene = gene, Description, 
+                `log2FC (G3)` = log2FC_G3, `p‑adj (G3)` = padj_G3, `Reg (G3)` = Reg_G3,
+                `log2FC (LV)` = log2FC_LV, `p‑adj (LV)` = padj_LV, `Reg (LV)` = Reg_LV) %>%
+  kable(caption = "Significant cysteine protease genes (C1 family)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  print()
+```
 
+```{r}
+# Significant protease genes 
+cystenine_sig_protease_genes <- cysteine_protease_table_sig$gene 
+
+# Get expression counts for proteases from your original count table
+
+cysteine_protease_counts <- kiwifruit_counts[rownames(kiwifruit_counts) %in% cystenine_sig_protease_genes, ]
+
+# Optional: log2 transform and scale per gene
+cysteine_log_counts <- log2(cysteine_protease_counts + 1)
+cysteine_scaled <- t(scale(t(cysteine_log_counts)))   # z‑score per gene
+
+# Annotate columns by strain
+annotation_col <- data.frame(Strain = meta_table$Strain)
+rownames(annotation_col) <- colnames(kiwifruit_counts)
+
+pheatmap(cysteine_scaled,
+         annotation_col = annotation_col,
+         show_rownames = FALSE,   # too many genes; can show if few
+         main = "Cysteine protease gene expression across strains",
+         fontsize = 8)
 ```
 
 **Question**
 
-Ignoring any that are non-significant in any condition, how many proteases / peptidases are we left with?
+Ignoring any that are non-significant in any condition, how many proteases / peptidases are we left with? Is it likely that the difference in phenotype is due to the changes in gene expression that we are / are not seeing?
