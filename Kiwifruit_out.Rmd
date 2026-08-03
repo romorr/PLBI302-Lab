@@ -413,6 +413,21 @@ go_LV_up   <- run_go(up_genes_LV,   "LV vs HY", "Up")
 go_LV_down <- run_go(down_genes_LV, "LV vs HY", "Down")
 
 # ---------- 3. Combine top 5 GO terms from each into ONE table ----------
+
+top_go_table <- bind_rows(
+  go_G3_up   %>% arrange(p.adjust) %>% head(5),
+  go_G3_down %>% arrange(p.adjust) %>% head(5),
+  go_LV_up   %>% arrange(p.adjust) %>% head(5),
+  go_LV_down %>% arrange(p.adjust) %>% head(5)
+) %>%
+  dplyr::select(Comparison, Direction, 
+         GO_ID = ID, 
+         Description, 
+         p.adjust, 
+         GeneRatio, 
+         Count, 
+         geneID)   # geneID shows which genes are in that GO term
+
 top_go_table %>%
   mutate(
     # Split GeneRatio into numerator and denominator
@@ -548,25 +563,47 @@ protease_table <- G3_proteases %>%
     by = "gene"
   )
 
-# Add annotation description (optional)
+
 protease_table <- protease_table %>%
   left_join(eggnog %>% dplyr::select(gene, Description), by = "gene") %>%
   relocate(Description, .after = gene)
 
-# Show only significant ones (either comparison)
+protease_table_sig <- protease_table %>%
+  filter(Reg_G3 != "Not significant" | Reg_LV != "Not significant")
+
 protease_table_sig %>%
   mutate(
     log2FC_G3 = round(log2FC_G3, 2),
     log2FC_LV = round(log2FC_LV, 2),
-    padj_G3 = format(padj_G3, scientific = TRUE, digits = 2),
-    padj_LV = format(padj_LV, scientific = TRUE, digits = 2)
+    padj_G3 = case_when(
+      padj_G3 >= 1 ~ "1.00",
+      padj_G3 < 0.001 ~ "< 0.001",
+      TRUE ~ formatC(padj_G3, format = "f", digits = 4)
+    ),
+    padj_LV = case_when(
+      padj_LV >= 1 ~ "1.00",
+      padj_LV < 0.001 ~ "< 0.001",
+      TRUE ~ formatC(padj_LV, format = "f", digits = 4)
+    )
   ) %>%
-  dplyr::select(Gene = gene, Description, 
-                `log2FC (G3)` = log2FC_G3, `p‑adj (G3)` = padj_G3, `Reg (G3)` = Reg_G3,
-                `log2FC (LV)` = log2FC_LV, `p‑adj (LV)` = padj_LV, `Reg (LV)` = Reg_LV) %>%
-  kable(caption = "Significant protease genes") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
-  print()
+  dplyr::select(
+    Gene = gene,
+    Description,
+    `log2FC (G3)` = log2FC_G3,
+    `p-adj (G3)` = padj_G3,   # regular hyphen, not Unicode dash
+    `Reg (G3)` = Reg_G3,
+    `log2FC (LV)` = log2FC_LV,
+    `p-adj (LV)` = padj_LV,   # regular hyphen
+    `Reg (LV)` = Reg_LV
+  ) %>%
+  kable(
+    caption = "Significant protease genes",
+    align = c("l", "l", "r", "r", "l", "r", "r", "l")  # numeric columns right‑aligned
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
 ```
 
 ```{r}
@@ -654,7 +691,6 @@ cysteine_protease_table <- cysteine_protease_table %>%
   left_join(eggnog %>% dplyr::select(gene, Description), by = "gene") %>%
   relocate(Description, .after = gene)
 
-# Show only significant ones (either comparison)
 cysteine_protease_table_sig <- cysteine_protease_table %>%
   filter(Reg_G3 != "Not significant" | Reg_LV != "Not significant")
 
@@ -662,15 +698,35 @@ cysteine_protease_table_sig %>%
   mutate(
     log2FC_G3 = round(log2FC_G3, 2),
     log2FC_LV = round(log2FC_LV, 2),
-    padj_G3 = format(padj_G3, scientific = TRUE, digits = 2),
-    padj_LV = format(padj_LV, scientific = TRUE, digits = 2)
+    padj_G3 = case_when(
+      padj_G3 >= 1 ~ "1.00",
+      padj_G3 < 0.001 ~ "< 0.001",
+      TRUE ~ formatC(padj_G3, format = "f", digits = 4)
+    ),
+    padj_LV = case_when(
+      padj_LV >= 1 ~ "1.00",
+      padj_LV < 0.001 ~ "< 0.001",
+      TRUE ~ formatC(padj_LV, format = "f", digits = 4)
+    )
   ) %>%
-  dplyr::select(Gene = gene, Description, 
-                `log2FC (G3)` = log2FC_G3, `p‑adj (G3)` = padj_G3, `Reg (G3)` = Reg_G3,
-                `log2FC (LV)` = log2FC_LV, `p‑adj (LV)` = padj_LV, `Reg (LV)` = Reg_LV) %>%
-  kable(caption = "Significant cysteine protease genes (C1 family)") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
-  print()
+  dplyr::select(
+    Gene = gene,
+    Description,
+    `log2FC (G3)` = log2FC_G3,
+    `p-adj (G3)` = padj_G3,
+    `Reg (G3)` = Reg_G3,
+    `log2FC (LV)` = log2FC_LV,
+    `p-adj (LV)` = padj_LV,
+    `Reg (LV)` = Reg_LV
+  ) %>%
+  kable(
+    caption = "Significant cysteine protease genes (C1 family)",
+    align = c("l", "l", "r", "r", "l", "r", "r", "l")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
 ```
 
 ```{r}
@@ -691,7 +747,7 @@ rownames(annotation_col) <- colnames(kiwifruit_counts)
 
 pheatmap(cysteine_scaled,
          annotation_col = annotation_col,
-         show_rownames = FALSE,   # too many genes; can show if few
+         show_rownames = TRUE,   # too many genes; can show if few
          main = "Cysteine protease gene expression across strains",
          fontsize = 8)
 ```
