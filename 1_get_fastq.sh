@@ -2,7 +2,7 @@
 #SBATCH --job-name=SRAS
 #SBATCH --mem=64GB
 #SBATCH --time=5-00:00
-#SBATCH --partition=aoraki
+#SBATCH --partition= XYZ
 #SBATCH --cpus-per-task=48
 
 

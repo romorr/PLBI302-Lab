@@ -2,14 +2,12 @@
 #SBATCH --job-name=hisat2_map
 #SBATCH --mem=256GB
 #SBATCH --time=5-00:00
-#SBATCH --partition=aoraki
+#SBATCH --partition=
 #SBATCH --cpus-per-task=48
 
 set -euo pipefail
 
-module load miniconda3/25
-conda init
-source /home/grero296/.bashrc
+
 conda activate rnaseq
 
 INPUT_DIR="trimmed_out"

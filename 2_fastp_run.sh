@@ -1,18 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=fastp_kiwifruit                # define the job name
-#SBATCH --mem=128GB                      # request an allocation with 32GB of ram
+#SBATCH --mem=128GB                      # request an allocation with 128GB of ram
 #SBATCH --time=5-00:00                  # wall time DD-HH:MM
-#SBATCH --partition=aoraki             # partition to which job should be submitted
+#SBATCH --partition=             # partition to which job should be submitted
 #SBATCH --cpus-per-task=48             # cpu-cores per task
 
 set -e  # stop if something fails
 
-module load miniconda3/25
-conda init
-source /home/grero296/.bashrc
-conda activate fastqc
+conda activate fastqc (contains fastp version 0.23.2)
 
-INPUT_DIR="/home/grero296/project/kiwifruit/PRJNA1413911"
+INPUT_DIR="/kiwifruit/PRJNA1413911"
 OUTPUT_DIR="trimmed_out"
 
 mkdir -p $OUTPUT_DIR
