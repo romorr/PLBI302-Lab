@@ -511,7 +511,7 @@ print(p_LV_down)
 
 **Question**
 
-1)  Which pathways are expressed differently between the different strains and what might they mean regarding kiwifruit physiology.
+1)  Which pathways are expressed differently between the different strains and what might they mean regarding kiwifruit physiology. Based on the pathways present, are these kiwifruit under any stresses that could confound our results? 
 
 We are trying to identify the cause of why green kiwifruit have a greater ability to digest proteins. The type of protein that degrades protein is called a protease. Using the annotation file, we can identify which genes contain a protease domain. Any genetic (sequential or expression) differences between the strains, could be the answer as to why the phenotype is different.
 
