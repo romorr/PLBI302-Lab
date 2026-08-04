@@ -1,6 +1,6 @@
 ---
 title: "Kiwifruit_Lab"
-author: "Me :)"
+author: "Me :) (Rosie M)"
 date: "2026-07-22"
 output: html_document
 ---
@@ -186,14 +186,16 @@ pca
 #Sample distance heatmap
 ###############################################
 dists <- dist(t(assay(vsd)))
-mat   <- as.matrix(dists)
+mat_scaled <- (mat - min(mat)) / (max(mat) - min(mat))
+mat_inv <- 1 - mat_scaled
 
-pheatmap(mat,
+pheatmap(mat_inv,
          clustering_distance_rows = dists,
          clustering_distance_cols = dists,
-         main = "Sample-to-Sample Distance Heatmap" , annotation_col = meta_table, drop = FALSE, 
+         main = "Inverted Distance Heatmap",
+         annotation_col = meta_table,
+         drop = FALSE,
          fontsize = 12)
-
 ```
 
 **Question**
@@ -204,13 +206,13 @@ Is there any sample that is not following the same pattern as its replicates?
 
 # Find summaries. Play around with changing the alpha value and the lncThreshold value and run different pathways analysis through them. See how the outputs change depending on what values you choose. 
 
-res_G3_vs_HY <- results(dds, alpha = 0.05, lfcThreshold = 5, 
+res_G3_vs_HY <- results(dds, alpha = 0.05, lfcThreshold = 3, 
   contrast = list("Strain_G3_vs_Hongyang")) 
 
 # Remembering back to the lectures, the alpha value tells DESeq the threshold for the false discovery rate (FDR), a value of 0.01 indicates that 1 % of the reported genes are false positives. 
 
 
-res_LV_vs_HY <- results(dds, alpha = 0.05, lfcThreshold = 5,
+res_LV_vs_HY <- results(dds, alpha = 0.05, lfcThreshold = 3,
   contrast = list("Strain_Lvrou_vs_Hongyang"))
 
 summary(res_G3_vs_HY)
