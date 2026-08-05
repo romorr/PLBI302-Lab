@@ -186,6 +186,7 @@ pca
 #Sample distance heatmap
 ###############################################
 dists <- dist(t(assay(vsd)))
+mat <- as.matrix(dists)
 mat_scaled <- (mat - min(mat)) / (max(mat) - min(mat))
 mat_inv <- 1 - mat_scaled
 
